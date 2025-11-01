@@ -118,7 +118,10 @@ def ensure_db():
             status TEXT,
             is_plus INTEGER DEFAULT 1,
             web_url TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            event_type TEXT,
+            venue TEXT,
+            competitors TEXT
         )""")
         db.execute("CREATE INDEX IF NOT EXISTS idx_events_start ON events(start_utc)")
 
@@ -159,12 +162,16 @@ def parse_and_store(days):
                 pid   = a.get("id") or a.get("airingId") or a.get("simulcastAiringId")
                 title = a.get("shortName") or a.get("name") or "Untitled"
                 sport = ((a.get("sport") or {}).get("name") or "").strip() or "sports"
+                sport_abbr = ((a.get("sport") or {}).get("abbreviation") or "").strip()
                 league_obj = a.get("league") or {}
                 league = (league_obj.get("abbreviation") or league_obj.get("name") or "").strip()
                 network_obj = a.get("network") or {}
                 subtitle = (network_obj.get("shortName") or network_obj.get("name") or "").strip()
                 start = a.get("startDateTime")
                 stop  = a.get("endDateTime")
+                
+                # Event type - available in API
+                event_type = a.get("type", "").strip()
                 
                 if not (pid and start and stop): 
                     continue
@@ -180,9 +187,11 @@ def parse_and_store(days):
                 
                 db.execute("""INSERT OR REPLACE INTO events(
                     id, sport, league, title, subtitle, summary, image, 
-                    start_utc, stop_utc, status, is_plus, web_url
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""", 
-                (pid, sport, league, title, subtitle, "", "", s_iso, e_iso, status, 1, ""))
+                    start_utc, stop_utc, status, is_plus, web_url, 
+                    event_type, venue, competitors
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", 
+                (pid, sport, league, title, subtitle, "", "", 
+                 s_iso, e_iso, status, 1, "", event_type, "", ""))
                 total += 1
         db.execute("COMMIT")
     return total

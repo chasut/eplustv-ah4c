@@ -227,15 +227,43 @@ def generate_xmltv(events):
             subtitle_elem.set('lang', 'en')
             subtitle_elem.text = event.get('subtitle') or event.get('league')
 
+        # Enhanced description with better formatting
         desc_elem = ET.SubElement(programme, 'desc')
         desc_elem.set('lang', 'en')
+        
+        desc_parts = []
         sport = event.get('sport', '')
         league = event.get('league', '')
-        parts = []
-        if sport: parts.append(f"Sport: {sport}")
-        if league: parts.append(f"League: {league}")
-        parts.append(f"Status: {'LIVE NOW' if is_live else 'Upcoming'}")
-        desc_elem.text = ' | '.join(parts)
+        network = event.get('subtitle', '')
+        event_type = event.get('event_type', '')
+        
+        # Build a prettier description
+        # Format: Sport • League on Network | Status
+        sport_info = []
+        if sport:
+            sport_info.append(sport)
+        if league:
+            sport_info.append(league)
+        
+        if sport_info:
+            desc_parts.append(" • ".join(sport_info))
+        
+        if network:
+            desc_parts.append(f"on {network}")
+        
+        # Add status indicator with emoji
+        if is_live:
+            desc_parts.append("🔴 LIVE NOW")
+        else:
+            # Show start time for upcoming events
+            local_start = start_time.strftime('%I:%M %p UTC').lstrip('0')
+            desc_parts.append(f"📅 {local_start}")
+        
+        # Add event type if it's special (not typical live event)
+        if event_type and event_type.lower() not in ['live', 'upcoming', 'scheduled', '']:
+            desc_parts.append(f"({event_type})")
+        
+        desc_elem.text = ' | '.join(desc_parts) if desc_parts else "ESPN+ Event"
 
         # Categories (normalized)
         cat1 = ET.SubElement(programme, 'category'); cat1.set('lang', 'en'); cat1.text = 'Sports'
