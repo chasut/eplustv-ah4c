@@ -1,31 +1,22 @@
-\
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 *.egg-info/
 .venv/
 .env
 .env.*
 
-# OS
+# OS / editors
 .DS_Store
 Thumbs.db
-
-# Project artifacts
-out/
-logs/
-*.sqlite3*
-*.db-shm
-*.db-wal
-*.log
-*.gz
-
-# Generated guides
-espn_plus.xml
-espn_plus.m3u
-
-# Editor
 .vscode/
 .idea/
+
+# Project artifacts (keep seed DB)
+out/*
+!out/espn_schedule.db
+
+# Logs and temp
+logs/
+*.log
+*.gz
