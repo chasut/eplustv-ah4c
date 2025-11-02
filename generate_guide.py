@@ -35,28 +35,23 @@ def ensure_out_dir():
     """Create ./out/ if it doesn't exist."""
     os.makedirs(OUT_DIR, exist_ok=True)
 
-def get_live_and_upcoming_events(db_path, hours_ahead=MAX_STANDBY_HOURS):
+def get_live_and_upcoming_events(db_path, hours_ahead=3):
     """
     Get events that are either:
     - Live now (started but not ended)
-    - Starting within next N hours (default matches MAX_STANDBY_HOURS)
-    - Ended recently (within 65 minutes) to show "EVENT ENDED" block across 2 hourly runs
+    - Starting within next N hours
     """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
     now = datetime.now(timezone.utc)
     window_end = now + timedelta(hours=hours_ahead)
-    
-    # Keep events for 65 minutes after they end
-    # With hourly runs, this ensures EVENT ENDED is visible for 2 cycles
-    grace_period_min = 65
 
     query = f"""
         SELECT * FROM events
-        WHERE datetime(stop_utc, '+{grace_period_min} minutes') > datetime('now')
+        WHERE datetime(stop_utc) > datetime('now')
           AND datetime(start_utc) <= datetime('now', '+{hours_ahead} hours')
-        ORDER BY start_utc, title, id
+        ORDER BY start_utc, title
     """
     cursor = conn.execute(query)
     events = [dict(row) for row in cursor.fetchall()]
@@ -82,21 +77,32 @@ def build_deep_link(play_id):
     """Build the ESPN deep link URL"""
     return f"sportscenter://x-callback-url/showWatchStream?playID={play_id}"
 
+
 def generate_m3u(events):
-    """Generate M3U playlist"""
+    """Generate M3U playlist (skip ended events; stable tvg-id by playID)"""
     lines = ['#EXTM3U']
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
 
     for idx, event in enumerate(events, 1):
-        channel_num = idx
         play_id = extract_play_id(event)
+
+        # Skip events that already ended (M3U only; keep them in XMLTV)
+        stop_time = parse_iso_datetime(event['stop_utc'])
+        if stop_time < now:
+            continue
+
         deep_link = build_deep_link(play_id)
 
         title = event.get('title', 'Unknown Event')
-        
-        # Just use the event title for channel name
-        channel_name = title
+        league = event.get('league', '')
 
-        lines.append(f'#EXTINF:-1 tvg-id="espnplus{channel_num}" tvg-name="{channel_name}" tvg-logo="" group-title="ESPN+",{channel_name}')
+        channel_name = f"ESPN+ {idx}: {title}"
+        if league:
+            channel_name += f" ({league})"
+
+        tvg_id = f"dl-{play_id}"
+        lines.append(f'#EXTINF:-1 tvg-id="{tvg_id}" tvg-name="{channel_name}" tvg-logo="" group-title="ESPN+",{channel_name}')
         lines.append(deep_link)
 
     return '\n'.join(lines)
@@ -105,25 +111,15 @@ def generate_standby_blocks(channel_id, start_time, now):
     """
     Generate STAND BY placeholder blocks before an event starts.
     Creates 30-minute blocks from now until event start (max 6 hours).
-    
-    Only generates blocks for truly upcoming events (start_time > now).
-    For live or past events, returns empty list since we can't create retroactive content.
     """
     blocks = []
 
     time_until = (start_time - now).total_seconds() / 60  # minutes
-    
-    # Only add STAND BY blocks for upcoming events
     if time_until <= 0:
-        return []  # Event already started - can't add retroactive blocks
+        return []  # Event already started or starting now
 
-    # Calculate how many STAND BY blocks to add (up to 6 hours worth)
     max_standby_min = MAX_STANDBY_HOURS * 60
     standby_duration = min(time_until, max_standby_min)
-
-    # Only add blocks if event is starting soon enough (within 6 hours)
-    if standby_duration <= 0:
-        return []
 
     current_time = now
     blocks_needed = int(standby_duration / STANDBY_BLOCK_DURATION_MIN)
@@ -170,18 +166,20 @@ def generate_xmltv(events):
 
     # Channels
     for idx, event in enumerate(events, 1):
-        channel_id = f"espnplus{idx}"
+        play_id = extract_play_id(event)
+        channel_id = f"dl-{play_id}"
         channel = ET.SubElement(tv, 'channel')
         channel.set('id', channel_id)
 
         display_name = ET.SubElement(channel, 'display-name')
         title = event.get('title', 'Unknown Event')
-        # Just use the event title - no channel number prefix
-        display_name.text = title
+        league = event.get('league', '')
+        display_name.text = f"ESPN+ {idx}: {title}" + (f" ({league})" if league else "")
 
     # Programmes
     for idx, event in enumerate(events, 1):
-        channel_id = f"espnplus{idx}"
+        play_id = extract_play_id(event)
+        channel_id = f"dl-{play_id}"
 
         start_time = parse_iso_datetime(event['start_utc'])
         stop_time  = parse_iso_datetime(event['stop_utc'])
@@ -190,21 +188,20 @@ def generate_xmltv(events):
         is_upcoming = start_time > now
 
         # Pre-event standby placeholders
-        # Only adds STAND BY blocks for upcoming events (not yet started)
-        # Live events show just the event itself without retroactive standby blocks
-        for block in generate_standby_blocks(channel_id, start_time, now):
-            programme = ET.SubElement(tv, 'programme')
-            programme.set('start', block['start'])
-            programme.set('stop', block['stop'])
-            programme.set('channel', channel_id)
+        if is_upcoming:
+            for block in generate_standby_blocks(channel_id, start_time, now):
+                programme = ET.SubElement(tv, 'programme')
+                programme.set('start', block['start'])
+                programme.set('stop', block['stop'])
+                programme.set('channel', channel_id)
 
-            title_elem = ET.SubElement(programme, 'title')
-            title_elem.set('lang', 'en')
-            title_elem.text = block['title']
+                title_elem = ET.SubElement(programme, 'title')
+                title_elem.set('lang', 'en')
+                title_elem.text = block['title']
 
-            desc_elem = ET.SubElement(programme, 'desc')
-            desc_elem.set('lang', 'en')
-            desc_elem.text = block['desc']
+                desc_elem = ET.SubElement(programme, 'desc')
+                desc_elem.set('lang', 'en')
+                desc_elem.text = block['desc']
 
         # The actual event
         programme = ET.SubElement(tv, 'programme')
@@ -224,52 +221,21 @@ def generate_xmltv(events):
             subtitle_elem.set('lang', 'en')
             subtitle_elem.text = event.get('subtitle') or event.get('league')
 
-        # Enhanced description with better formatting
         desc_elem = ET.SubElement(programme, 'desc')
         desc_elem.set('lang', 'en')
-        
-        desc_parts = []
         sport = event.get('sport', '')
         league = event.get('league', '')
-        network = event.get('subtitle', '')
-        event_type = event.get('event_type', '')
-        
-        # Build a prettier description
-        # Format: Sport • League on Network | Status
-        sport_info = []
-        if sport:
-            sport_info.append(sport)
-        if league:
-            sport_info.append(league)
-        
-        if sport_info:
-            desc_parts.append(" • ".join(sport_info))
-        
-        if network:
-            desc_parts.append(f"on {network}")
-        
-        # Add status indicator with emoji
-        if is_live:
-            desc_parts.append("🔴 LIVE NOW")
-        else:
-            # Show start time for upcoming events
-            local_start = start_time.strftime('%I:%M %p UTC').lstrip('0')
-            desc_parts.append(f"📅 {local_start}")
-        
-        # Add event type if it's special (not typical live event)
-        if event_type and event_type.lower() not in ['live', 'upcoming', 'scheduled', '']:
-            desc_parts.append(f"({event_type})")
-        
-        desc_elem.text = ' | '.join(desc_parts) if desc_parts else "ESPN+ Event"
+        parts = []
+        if sport: parts.append(f"Sport: {sport}")
+        if league: parts.append(f"League: {league}")
+        parts.append(f"Status: {'LIVE NOW' if is_live else 'Upcoming'}")
+        desc_elem.text = ' | '.join(parts)
 
         # Categories (normalized)
         cat1 = ET.SubElement(programme, 'category'); cat1.set('lang', 'en'); cat1.text = 'Sports'
         cat2 = ET.SubElement(programme, 'category'); cat2.set('lang', 'en'); cat2.text = 'Sports event'
         if sport:
             cat3 = ET.SubElement(programme, 'category'); cat3.set('lang', 'en'); cat3.text = sport
-        # Add league as additional category if it's more specific than sport (e.g., "NCAA Men's Ice Hockey")
-        if league and league.lower() not in [sport.lower(), 'sports', '']:
-            cat4 = ET.SubElement(programme, 'category'); cat4.set('lang', 'en'); cat4.text = league
 
         # Post-event placeholder
         ended = generate_event_ended_block(channel_id, stop_time)
@@ -301,8 +267,8 @@ def main():
     print(f"Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
     print()
 
-    print(f"Fetching live and upcoming events (next {MAX_STANDBY_HOURS} hours)...")
-    events = get_live_and_upcoming_events(db_path)
+    print("Fetching live and upcoming events (next 3 hours)...")
+    events = get_live_and_upcoming_events(db_path, hours_ahead=3)
 
     if not events:
         print("No live or upcoming events found!")
