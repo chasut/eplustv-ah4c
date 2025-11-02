@@ -101,29 +101,43 @@ def fetch_day(day_str: str):
         return None
 
 def ensure_db():
-    db_dir = os.path.dirname(OUT_DB)
-    if db_dir:  # Only create if there's a directory component
-        os.makedirs(db_dir, exist_ok=True)
-    with sqlite3.connect(OUT_DB) as db:
-        db.execute("""CREATE TABLE IF NOT EXISTS events (
-            id TEXT PRIMARY KEY,
-            sport TEXT,
-            league TEXT,
-            title TEXT,
-            subtitle TEXT,
-            summary TEXT,
-            image TEXT,
-            start_utc TEXT,
-            stop_utc TEXT,
-            status TEXT,
-            is_plus INTEGER DEFAULT 1,
-            web_url TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            event_type TEXT,
-            venue TEXT,
-            competitors TEXT
-        )""")
-        db.execute("CREATE INDEX IF NOT EXISTS idx_events_start ON events(start_utc)")
+    """Ensure database and output directory exist."""
+    try:
+        db_dir = os.path.dirname(OUT_DB)
+        if db_dir:  # Only create if there's a directory component
+            os.makedirs(db_dir, exist_ok=True)
+            logging.info("Database directory: %s", os.path.abspath(db_dir))
+        else:
+            # If no directory in path, make sure current dir exists
+            logging.info("Database will be created in current directory")
+        
+        logging.info("Database path: %s", os.path.abspath(OUT_DB))
+        
+        with sqlite3.connect(OUT_DB) as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS events (
+                id TEXT PRIMARY KEY,
+                sport TEXT,
+                league TEXT,
+                title TEXT,
+                subtitle TEXT,
+                summary TEXT,
+                image TEXT,
+                start_utc TEXT,
+                stop_utc TEXT,
+                status TEXT,
+                is_plus INTEGER DEFAULT 1,
+                web_url TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                event_type TEXT,
+                venue TEXT,
+                competitors TEXT
+            )""")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_events_start ON events(start_utc)")
+            logging.info("Database initialized successfully")
+    except Exception as e:
+        logging.error("Failed to initialize database: %s", e)
+        logging.error("Make sure you have write permissions in: %s", os.path.dirname(os.path.abspath(OUT_DB)) or "current directory")
+        raise
 
 def parse_and_store(days):
     ensure_db()
