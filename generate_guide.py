@@ -98,6 +98,21 @@ def shorten_title(s: str, max_len: int = 38) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     if len(s) <= max_len:
         return s
+    
+    # Check for important suffixes to preserve (Mat numbers, language tags, etc)
+    suffix_match = re.search(r'(\s+-\s+Mat\s+\d+|\s+\(ESP\)|\s+\([A-Z]{3}\))$', s, re.I)
+    if suffix_match:
+        suffix = suffix_match.group(1)
+        # Shorten the main part, then add suffix back
+        main_part = s[:suffix_match.start()]
+        max_main = max_len - len(suffix)
+        if len(main_part) > max_main:
+            cut = main_part[: max_main + 1]
+            cut = cut.rsplit(" ", 1)[0]
+            main_part = (cut or main_part[:max_main]).rstrip()
+        return main_part + suffix
+    
+    # No suffix, just truncate normally
     cut = s[: max_len + 1]
     cut = cut.rsplit(" ", 1)[0]
     return (cut or s[:max_len]).rstrip() + "..."
@@ -137,6 +152,30 @@ def team_code(name: str) -> str:
 def compact_matchup(title: str) -> str:
     """Return <=8 chars like NYR-SEA, RIT@CLG, UGA-ALA, etc."""
     t = re.sub(r'\s+', ' ', title or '').strip()
+    
+    # Check for Mat numbers (wrestling/multi-stream events)
+    mat_match = re.search(r'\s+-\s+Mat\s+(\d+)', t, re.I)
+    if mat_match:
+        mat_num = mat_match.group(1)
+        # Extract base event name
+        base = t[:mat_match.start()].strip()
+        base_code = re.sub(r'[^A-Za-z0-9]', '', base).upper()[:4]
+        return f"{base_code}M{mat_num}"[:8]  # e.g., "PRINCM9"
+    
+    # Check for language tags like (ESP)
+    lang_match = re.search(r'\(([A-Z]{3})\)$', t)
+    if lang_match:
+        lang = lang_match.group(1)
+        base = t[:lang_match.start()].strip()
+        # Try normal matchup parsing on base
+        m = re.search(r'(.+?)\s+(vs\.?|v\.?|at|@)\s+(.+)', base, flags=re.I)
+        if m:
+            a = team_code(m.group(1))
+            b = team_code(m.group(3))
+            sep = '-' if m.group(2).lower().startswith(('v','vs','v.','vs.')) else '@'
+            code = f"{a}{sep}{b}"[:5]  # Leave room for lang tag
+            return f"{code}{lang}"[:8]  # e.g., "SPAR-ESP"
+    
     # Common separators: vs, vs., v, v., at, @
     m = re.search(r'(.+?)\s+(vs\.?|v\.?|at|@)\s+(.+)', t, flags=re.I)
     if m:
