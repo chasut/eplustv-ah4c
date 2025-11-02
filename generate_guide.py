@@ -1,4 +1,4 @@
-
+#!/usr/bin/env python3
 #!/usr/bin/env python3
 # DeepLinks — ESPN+ M3U/XMLTV generator
 # - Stable channel ids: dl-<event id>
@@ -6,7 +6,8 @@
 # - Include LIVE and next ~3 hours; keep events until 65 min after end
 # - Standby blocks: 30m tiles up to 6h ahead of start (skip <5m slivers)
 # - Channel display-name: <short event title>, then "ESPN+"
-# - FIX: Use julianday() on BOTH sides of time window comparisons (no string-compare undercount)
+# - FIX: Use julianday() on BOTH sides of time window comparisons
+# - NEW: ultra-short M3U names (<=8 chars) like "NYR-SEA" or "RIT@CLG"
 
 from __future__ import annotations
 
@@ -68,6 +69,48 @@ def shorten_title(s: str, max_len: int = 38) -> str:
 def _jd_fmt(dt_: datetime) -> str:
     # SQLite-friendly UTC datetime: "YYYY-MM-DD HH:MM:SS+00:00"
     return dt_.strftime("%Y-%m-%d %H:%M:%S+00:00")
+
+# --- Compact M3U naming (<=8 chars) ----------------------------------------
+
+_STOPWORDS = {
+    'university','college','state','st','saint','of','the','fc','sc','cf','club','athletic',
+    'women','men','ladies','girls','boys'
+}
+
+def team_code(name: str) -> str:
+    """Generate a compact 2–4 letter code from a team/school name."""
+    s = re.sub(r'#\s*\d+\s*', ' ', name)      # drop rankings like #20
+    s = re.sub(r'\(.*?\)', ' ', s)            # drop parenthetical
+    s = re.sub(r'[^A-Za-z0-9\s]', ' ', s)     # keep alnum/space
+    words = [w for w in s.split() if w.lower() not in _STOPWORDS]
+    if not words:
+        words = s.split() or ['???']
+
+    # Prefer existing short all-caps tokens like RIT, UAB, BYU
+    for w in words:
+        if 2 <= len(w) <= 4 and w.isupper():
+            return w[:4].upper()
+
+    # Otherwise acronym from first letters
+    acro = ''.join(w[0] for w in words[:3]).upper()
+    if 2 <= len(acro) <= 4:
+        return acro
+    # Fallback: first 3 letters of first token
+    return words[0][:4].upper()
+
+def compact_matchup(title: str) -> str:
+    """Return <=8 chars like NYR-SEA, RIT@CLG, UGA-ALA, etc."""
+    t = re.sub(r'\s+', ' ', title or '').strip()
+    # Common separators: vs, vs., v, v., at, @
+    m = re.search(r'(.+?)\s+(vs\.?|v\.?|at|@)\s+(.+)', t, flags=re.I)
+    if m:
+        a = team_code(m.group(1))
+        b = team_code(m.group(3))
+        sep = '-' if m.group(2).lower().startswith(('v','vs','v.','vs.')) else '@'
+        code = f"{a}{sep}{b}"
+        return code[:8]
+    # If we can't parse, crush to 8 alnum
+    return re.sub(r'[^A-Za-z0-9]', '', t).upper()[:8]
 
 # --- Data model -------------------------------------------------------------
 
@@ -218,7 +261,6 @@ def deep_link_for(ev: Event) -> str:
 def generate_m3u(events: List[Event], out_path: str) -> None:
     now = now_utc()
     lines = ["#EXTM3U"]
-    idx = 1  # cosmetic numbering
 
     for ev in events:
         # Hide ended events from M3U but keep in XMLTV
@@ -226,15 +268,13 @@ def generate_m3u(events: List[Event], out_path: str) -> None:
             continue
 
         tvg_id = f"dl-{ev.id}"
-        short = shorten_title(ev.title)
-        suffix = ev.league or ev.sport or ""
-        ch_name = f"{GROUP_TITLE} {idx}: {short}" + (f" ({suffix})" if suffix else "")
+        m3u_name = compact_matchup(ev.title)  # <= 8 chars
 
         lines.append(
-            f'#EXTINF:-1 tvg-id="{tvg_id}" tvg-name="{ch_name}" tvg-logo="" group-title="{GROUP_TITLE}",{ch_name}'
+            f'#EXTINF:-1 tvg-id="{tvg_id}" tvg-name="{m3u_name}" tvg-logo="" '
+            f'group-title="{GROUP_TITLE}",{m3u_name}'
         )
         lines.append(deep_link_for(ev))
-        idx += 1
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
