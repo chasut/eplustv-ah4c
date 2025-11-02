@@ -267,6 +267,9 @@ def generate_xmltv(events):
         cat2 = ET.SubElement(programme, 'category'); cat2.set('lang', 'en'); cat2.text = 'Sports event'
         if sport:
             cat3 = ET.SubElement(programme, 'category'); cat3.set('lang', 'en'); cat3.text = sport
+        # Add league as additional category if it's more specific than sport (e.g., "NCAA Men's Ice Hockey")
+        if league and league.lower() not in [sport.lower(), 'sports', '']:
+            cat4 = ET.SubElement(programme, 'category'); cat4.set('lang', 'en'); cat4.text = league
 
         # Post-event placeholder
         ended = generate_event_ended_block(channel_id, stop_time)

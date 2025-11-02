@@ -164,7 +164,8 @@ def parse_and_store(days):
                 sport = ((a.get("sport") or {}).get("name") or "").strip() or "sports"
                 sport_abbr = ((a.get("sport") or {}).get("abbreviation") or "").strip()
                 league_obj = a.get("league") or {}
-                league = (league_obj.get("abbreviation") or league_obj.get("name") or "").strip()
+                # Try to get full league name first, fall back to abbreviation
+                league = (league_obj.get("name") or league_obj.get("abbreviation") or "").strip()
                 network_obj = a.get("network") or {}
                 subtitle = (network_obj.get("shortName") or network_obj.get("name") or "").strip()
                 start = a.get("startDateTime")
@@ -172,6 +173,19 @@ def parse_and_store(days):
                 
                 # Event type - available in API
                 event_type = a.get("type", "").strip()
+                
+                # Debug: Log league data for first few items to see what we're getting
+                if not hasattr(parse_and_store, '_logged_leagues') and league:
+                    if not hasattr(parse_and_store, '_league_log_count'):
+                        parse_and_store._league_log_count = 0
+                    if parse_and_store._league_log_count < 5:
+                        logging.info("League data - name: '%s', abbrev: '%s', sport: '%s'", 
+                                   league_obj.get("name", ""), 
+                                   league_obj.get("abbreviation", ""),
+                                   sport)
+                        parse_and_store._league_log_count += 1
+                        if parse_and_store._league_log_count >= 5:
+                            parse_and_store._logged_leagues = True
                 
                 if not (pid and start and stop): 
                     continue
@@ -210,14 +224,17 @@ def main():
             logging.warning("zoneinfo not available, using UTC")
             tz = timezone.utc
     
-    now = datetime.now(tz)
+    # CRITICAL: Use UTC for date calculations to match API timezone
+    # Even if TZN config is different, dates should be calculated in UTC
+    now = datetime.now(timezone.utc)
     logging.info("Current time (TZ=%s): %s", TZN, now)
-    # Only fetch today and forward - API doesn't like historical dates
+    # Fetch from yesterday through +2 days to catch games across timezone boundaries
+    # This ensures we get games that started "yesterday" in UTC but are still live
     days = [
-        now.strftime("%Y-%m-%d"),
-        (now + timedelta(days=1)).strftime("%Y-%m-%d"),
-        (now + timedelta(days=2)).strftime("%Y-%m-%d"),
-        (now + timedelta(days=3)).strftime("%Y-%m-%d"),
+        (now - timedelta(days=1)).strftime("%Y-%m-%d"),  # Yesterday UTC (catches evening games in Americas)
+        now.strftime("%Y-%m-%d"),                         # Today UTC
+        (now + timedelta(days=1)).strftime("%Y-%m-%d"),  # Tomorrow UTC
+        (now + timedelta(days=2)).strftime("%Y-%m-%d"),  # +2 days UTC
     ]
     logging.info("="*59)
     logging.info("ESPN Watch Graph Scraper - Starting")
