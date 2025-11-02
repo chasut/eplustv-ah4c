@@ -63,7 +63,7 @@ Run manually:
 
 Run hourly via cron (quotes + flock guard):
 ```bash
-APP_DIR="<ABSOLUTE_PATH_TO_CLONE>"
+APP_DIR="/path/to/DeepLinks"
 mkdir -p "$APP_DIR/logs"
 ( crontab -l 2>/dev/null | grep -v "$APP_DIR/hourly.sh" ; \
   echo 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' ; \
@@ -79,7 +79,7 @@ Run nightly to keep the DB fresh without hammering upstream:
 
 Cron at 3:30 AM:
 ```bash
-APP_DIR="<ABSOLUTE_PATH_TO_CLONE>"
+APP_DIR="/path/to/DeepLinks"
 mkdir -p "$APP_DIR/logs"
 ( crontab -l 2>/dev/null | grep -v "$APP_DIR/nightly_scrape.sh" ; \
   echo 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' ; \
@@ -104,7 +104,7 @@ If you prefer to point Channels (or a browser) at URLs instead of local paths, u
 
 ### Run as a background service (systemd)
 
-Create a systemd unit to run at boot:
+Create a systemd unit to run at boot (adjust user/path as needed):
 
 ```bash
 sudo tee /etc/systemd/system/deeplinks-out.service >/dev/null <<'UNIT'
@@ -115,8 +115,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/brad/Projects/DeepLinks
-ExecStart=/usr/bin/python3 /home/brad/Projects/DeepLinks/serve_out.py --port 6967
+WorkingDirectory=/path/to/DeepLinks
+ExecStart=/usr/bin/python3 /path/to/DeepLinks/serve_out.py --port 6967
 Restart=on-failure
 RestartSec=3
 
@@ -159,7 +159,7 @@ UNIT
 
 systemctl --user daemon-reload
 systemctl --user enable --now deeplinks-out.service
-systemctl --user status deeplinks-out.service --no-pager
+systemctl --user status --no-pager -l -n 50 -u deeplinks-out.service
 ```
 
 View logs: `journalctl --user -u deeplinks-out -f`
