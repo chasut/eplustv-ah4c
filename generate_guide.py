@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # DeepLinks - ESPN+ M3U/XMLTV generator
 # - Stable channel ids: dl-<event id>
-# - M3U skips ended events (XMLTV keeps 30m "EVENT ENDED" stubs for already-ended events)
+# - M3U skips ended events (XMLTV keeps all events with full schedule)
+# - Each channel has 16+ hours of programming: 8hrs before + event + 8hrs after
+# - "NOT YET STARTED" blocks before event, "STREAM OFFLINE" after
 # - Include LIVE and next ~3 hours; keep events until 65 min after end
-# - Standby blocks: 30m tiles up to 6h ahead of start (skip <5m slivers)
 # - Channel display-name: <short event title>, then "ESPN+"
 # - Uses julianday() on BOTH sides of time window comparisons
 # - Ultra-short M3U names (<=8 chars) like "NYR-SEA" or "RIT@CLG"
-# - NEW: XMLTV <desc> filled with TITLE - SPORT - LEAGUE - STATUS
+# - XMLTV <desc> filled with TITLE - SPORT - LEAGUE - STATUS
 
 from __future__ import annotations
 
@@ -34,6 +35,41 @@ EVENT_ENDED_DURATION_MIN = int(os.environ.get("DEEPLINKS_ENDED_TILE_MIN", "30"))
 
 GROUP_TITLE = os.environ.get("DEEPLINKS_GROUP", "ESPN+")
 PROVIDER_LABEL = os.environ.get("DEEPLINKS_PROVIDER_LABEL", "ESPN+")
+
+# Display timezone for descriptions (defaults to system local time)
+# Set to timezone name like "America/New_York", "US/Pacific", "Europe/London", etc.
+# Or leave empty to use system default
+DISPLAY_TZ = os.environ.get("DEEPLINKS_DISPLAY_TZ", "")
+
+# --- Helpers ----------------------------------------------------------------
+
+def get_display_timezone():
+    """Get the timezone to use for displaying times in descriptions."""
+    if DISPLAY_TZ:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(DISPLAY_TZ)
+        except ImportError:
+            try:
+                from backports.zoneinfo import ZoneInfo
+                return ZoneInfo(DISPLAY_TZ)
+            except ImportError:
+                pass
+    # Use system local timezone
+    return None  # datetime will use local tz
+
+def format_time_local(dt: datetime) -> str:
+    """Format datetime in local timezone like '2:00 PM EST' """
+    local_tz = get_display_timezone()
+    if local_tz:
+        local_dt = dt.astimezone(local_tz)
+    else:
+        local_dt = dt.astimezone()  # Use system local
+    
+    # Format: "2:00 PM EST" (with timezone abbreviation)
+    time_str = local_dt.strftime('%I:%M %p').lstrip('0')
+    tz_str = local_dt.strftime('%Z')
+    return f"{time_str} {tz_str}"
 
 # --- Helpers ----------------------------------------------------------------
 
@@ -242,35 +278,46 @@ def generate_xmltv(events: List[Event], out_path: str) -> None:
     # Emit programmes per event channel
     for ev in events:
         chan = chan_ids[ev.id]
-        pretty_desc = format_desc(ev)
+        event_desc = format_desc(ev)  # Original event description
 
-        # Standby tiles BEFORE start (only for upcoming)
-        if ev.start > now:
-            pre_max = min(ev.start - now, timedelta(hours=MAX_STANDBY_HOURS))
-            if pre_max.total_seconds() > 0:
-                cursor = ev.start - pre_max
-                # align to STANDBY_TILE_MIN grid
-                align_min = (cursor.minute // STANDBY_TILE_MIN) * STANDBY_TILE_MIN
-                cursor = cursor.replace(minute=align_min, second=0, microsecond=0)
-                while cursor < ev.start:
-                    block_end = min(cursor + timedelta(minutes=STANDBY_TILE_MIN), ev.start)
-                    # Skip micro-slivers <5m
-                    if minutes_between(cursor, block_end) >= 5:
-                        emit_programme(tv, chan, cursor, block_end, "STAND BY", (), pretty_desc)
-                    cursor += timedelta(minutes=STANDBY_TILE_MIN)
+        # --- BEFORE EVENT: 8 hours of "NOT YET STARTED" blocks ---
+        pre_start = ev.start - timedelta(hours=8)
+        cursor = pre_start
+        # Align to STANDBY_TILE_MIN grid
+        align_min = (cursor.minute // STANDBY_TILE_MIN) * STANDBY_TILE_MIN
+        cursor = cursor.replace(minute=align_min, second=0, microsecond=0)
+        
+        # Description for pre-event blocks (in local timezone)
+        pre_desc = f"{ev.title.upper()} - STARTS AT {format_time_local(ev.start)}"
+        
+        while cursor < ev.start:
+            block_end = min(cursor + timedelta(minutes=STANDBY_TILE_MIN), ev.start)
+            # Skip tiny slivers
+            if minutes_between(cursor, block_end) >= 5:
+                emit_programme(tv, chan, cursor, block_end, "NOT YET STARTED", (), pre_desc)
+            cursor += timedelta(minutes=STANDBY_TILE_MIN)
 
-        # The event itself
+        # --- THE ACTUAL EVENT ---
         cats = ["Sports", "Sports event"]
         if ev.sport:
             cats.append(ev.sport)
         if ev.league:
             cats.append(ev.league)
-        emit_programme(tv, chan, ev.start, ev.stop, ev.title, cats, pretty_desc)
+        emit_programme(tv, chan, ev.start, ev.stop, ev.title, cats, event_desc)
 
-        # Post tile only if already ended (visible stub)
-        if ev.stop <= now + timedelta(minutes=1):
-            end_stub = ev.stop + timedelta(minutes=EVENT_ENDED_DURATION_MIN)
-            emit_programme(tv, chan, ev.stop, end_stub, "EVENT ENDED", (), pretty_desc)
+        # --- AFTER EVENT: 8 hours of "STREAM OFFLINE" blocks ---
+        post_end = ev.stop + timedelta(hours=8)
+        cursor = ev.stop
+        
+        # Description for post-event blocks (in local timezone)
+        post_desc = f"{ev.title.upper()} - EVENT ENDED AT {format_time_local(ev.stop)}"
+        
+        while cursor < post_end:
+            block_end = min(cursor + timedelta(minutes=STANDBY_TILE_MIN), post_end)
+            # Skip tiny slivers
+            if minutes_between(cursor, block_end) >= 5:
+                emit_programme(tv, chan, cursor, block_end, "STREAM OFFLINE", (), post_desc)
+            cursor += timedelta(minutes=STANDBY_TILE_MIN)
 
     # Pretty-print (Python 3.9+)
     try:
