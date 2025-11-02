@@ -368,7 +368,11 @@ def generate_xmltv(events: List[Event], out_path: str) -> None:
 # --- M3U generation ---------------------------------------------------------
 
 def deep_link_for(ev: Event) -> str:
-    # sportscenter://x-callback-url/showWatchStream?playID=<UUID>
+    # If AH4C=true, output tuner URL format
+    if os.environ.get("AH4C", "").lower() in ("1", "true", "yes"):
+        return f"http://{{{{ .IPADDRESS }}}}/play/tuner/{ev.id}"
+    
+    # Default (existing behavior)
     return f"sportscenter://x-callback-url/showWatchStream?playID={ev.id}"
 
 def generate_m3u(events: List[Event], out_path: str) -> None:
