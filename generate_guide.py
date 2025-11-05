@@ -370,7 +370,7 @@ def generate_xmltv(events: List[Event], out_path: str) -> None:
 def deep_link_for(ev: Event) -> str:
     # If AH4C=true, output tuner URL format
     if os.environ.get("AH4C", "").lower() in ("1", "true", "yes"):
-        return f"http://{{{{ .IPADDRESS }}}}/play/tuner/{ev.id}"
+        return f"http://10.0.0.122:7654/play/tuner/play/tuner/{ev.id}"
     
     # Default (existing behavior)
     return f"sportscenter://x-callback-url/showWatchStream?playID={ev.id}"
